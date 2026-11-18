@@ -4,7 +4,6 @@
 
 [build]
   publish = "."
-  functions = "netlify/functions"
 
 # Global security & CORS headers
 [[headers]]
@@ -27,24 +26,3 @@
   for = "*.js"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
-
-# API Route Rewrites to Netlify Serverless Functions
-[[redirects]]
-  from = "/api/data"
-  to = "/.netlify/functions/data"
-  status = 200
-
-[[redirects]]
-  from = "/api/sensors"
-  to = "/.netlify/functions/data"
-  status = 200
-
-[[redirects]]
-  from = "/api/status"
-  to = "/.netlify/functions/status"
-  status = 200
-
-[[redirects]]
-  from = "/api/device/info"
-  to = "/.netlify/functions/status"
-  status = 200

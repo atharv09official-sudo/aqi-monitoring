@@ -1,4 +1,0 @@
-/api/data        /.netlify/functions/data     200
-/api/sensors     /.netlify/functions/data     200
-/api/status      /.netlify/functions/status   200
-/api/device/info /.netlify/functions/status   200
