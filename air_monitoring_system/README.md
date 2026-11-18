@@ -1,44 +1,58 @@
-# Air Monitoring System – Mobile Dashboard
+# BuildX Air Monitoring System – Dashboard & Firmware
 
-A responsive HTML5, CSS and JavaScript client dashboard intended to be hosted by the ESP32 access point at `http://192.168.4.1`.
+A responsive, high-contrast client dashboard with **Light Theme** (default) and **Dark Theme** support, designed to run both on local ESP32 hardware hotspots and as a deployed web app on **Netlify**.
 
-## Files
-- `index.html` – landing page and dashboard
-- `style.css` – mobile-first responsive styling
-- `app.js` – fetches live sensor data and updates the UI
+---
 
-## Wi-Fi access
-- SSID: `buildx123`
-- Password: `buildx123`
-- URL: `http://192.168.4.1`
+## 🚀 Quick Deploy to Netlify
 
-## ESP32 data integration
-The front end polls `GET /api/data` every 2 seconds. Your ESP32 firmware must expose this endpoint and return JSON, with an example:
+You can deploy this dashboard to Netlify in seconds:
 
-```json
-{
-  "temperature": 28.4,
-  "pressure": 1008.6,
-  "dust": 245,
-  "airQuality": "Moderate",
-  "light": "Bright",
-  "voltage": 5.02,
-  "current": 118.4,
-  "ina219": true,
-  "buzzer": false,
-  "alert": "Normal",
-  "systemOnline": true
-}
-```
+### Option A: Drag & Drop (Instant)
+1. Go to [Netlify Drop](https://app.netlify.com/drop).
+2. Drag and drop the `air_monitoring_system` folder directly onto the page.
+3. Your live dashboard is ready with an `https://<your-site>.netlify.app` URL!
 
-Supported fields: `temperature`, `pressure`, `dust`, `airQuality`, `light`, `voltage`, `current`, `ina219`, `buzzer`, `alert`, `alertMessage`, `systemOnline`.
+### Option B: Git Push
+1. Push this repository to GitHub / GitLab / Bitbucket.
+2. In Netlify, select **Add new site** > **Import an existing project**.
+3. Build settings are automatically detected from `netlify.toml`:
+   - **Publish directory**: `.`
+   - **Functions directory**: `netlify/functions`
+4. Click **Deploy**.
 
-If your firmware uses a different route, edit `API_URL` near the top of `app.js`. The field names in the JSON should match the example, or map them in `updateDashboard()`.
+When deployed on Netlify:
+- `/api/data` and `/api/sensors` are automatically powered by the included Netlify Serverless Functions (`netlify/functions/data.js`).
+- Visitors can view live simulated telemetry or toggle **Simulate** mode at any time.
 
-## Hosting
-Copy these three front-end files into the ESP32 web server's data/www folder (depending on the firmware/web-server library) and upload that filesystem image. The ESP32 must serve `index.html`, `style.css`, `app.js`, and `/api/data` from the same origin. This avoids browser CORS issues.
+---
 
-You can also test the page locally with a static server, but live readings will only appear when the API endpoint is reachable. A browser opening the HTML file directly may block fetch requests.
+## 📡 Local ESP32 Hardware Integration
 
-## Important
-This package contains the client-side dashboard only. It does not include ESP32 firmware or sensor calibration. Dust values and air-quality categories depend on the sensor and firmware calibration; they are estimates, not certified measurements.
+When operating the ESP32 hardware node:
+- **Hotspot SSID**: `buildx123`
+- **Password**: `buildx123`
+- **Gateway URL**: `http://192.168.4.1`
+
+### Firmware Files
+- Primary sketch: `AirMonitor_ESP32_Optimized.ino`
+- Backup copy: `AirMonitor_ESP32_Optimized_Copy.ino`
+- Bundled copy: `firmware/AirMonitor_ESP32_Optimized.ino`
+
+### ESP32 REST API Endpoints
+| Endpoint | Method | Purpose |
+| :--- | :--- | :--- |
+| `/api/data` | `GET` | Primary telemetry stream polled every 2s |
+| `/api/sensors` | `GET` | Extended raw telemetry & backward compatibility |
+| `/api/status` | `GET` | Wi-Fi client count, uptime, and system health |
+| `/api/device/info` | `GET` | I2C addresses (BMP280 `0x76`, INA219 `0x40`, LCD `0x27`) |
+| `/api/buzzer/test` | `GET` | Diagnostic test tone on the passive piezo buzzer |
+| `/*` (OPTIONS) | `OPTIONS` | HTTP 204 CORS preflight response |
+
+---
+
+## 🎨 Features
+- **Light Theme by default**: Crisp slate typography, soft cards, WCAG AA compliant contrast.
+- **Theme Toggle Switch**: Sun ☀️ / Moon 🌙 button in the topbar with `localStorage` memory.
+- **Simulate Mode**: One-click preview of realistic fluctuating sensor readings and alerts.
+- **Offline Reliability**: Embedded system font fallbacks and inline SVGs ensure zero broken assets when disconnected from the internet.
