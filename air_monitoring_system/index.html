@@ -41,7 +41,7 @@
         <!-- Sun Icon (for switching to light) -->
         <svg id="sunIcon" style="display:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="5"></circle>
-          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="12" x2="12" y2="3"></line>
           <line x1="12" y1="21" x2="12" y2="23"></line>
           <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
           <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
@@ -78,7 +78,7 @@
         </a>
         <a class="secondary-btn" href="#setup">
           <span>Quick setup guide</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
         </a>
@@ -88,6 +88,7 @@
         <span>Local Device Access</span>
         <span>Zero Cloud Dependency</span>
         <span>2.0s Telemetry Polling</span>
+        <span>mDNS: airmonitor.local</span>
       </div>
     </section>
 
@@ -263,7 +264,16 @@
               <strong><code>192.168.4.1</code></strong>
             </div>
           </div>
-          <p class="panel-note">Keep this client device connected to the BuildX local Wi-Fi hotspot for real-time telemetry.</p>
+
+          <!-- Hardware Action Controls -->
+          <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
+            <button class="secondary-btn" style="padding:6px 12px; font-size:12px;" onclick="testBuzzer()">Test Alarm</button>
+            <button class="secondary-btn" style="padding:6px 12px; font-size:12px;" id="muteBtn" onclick="toggleMute()">Mute Alarm</button>
+            <button class="secondary-btn" style="padding:6px 12px; font-size:12px;" onclick="scanI2C()">Scan I2C Bus</button>
+          </div>
+          <div id="i2cScanResult" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
+
+          <p class="panel-note">Connect to Wi-Fi 'buildx123' or use http://airmonitor.local for real-time telemetry.</p>
         </article>
       </div>
 
@@ -304,10 +314,19 @@
         <div class="step-card">
           <b>STEP 03</b>
           <strong>Open dashboard</strong>
-          <p>In any browser, navigate directly to the local hotspot gateway:</p>
-          <div class="code-badge">
+          <p>In any browser, navigate to the local gateway or mDNS host:</p>
+          <div class="code-badge" style="margin-bottom:6px;">
             <span>http://192.168.4.1</span>
             <button class="copy-btn" onclick="copyText('http://192.168.4.1', this)" title="Copy Gateway IP">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+          <div class="code-badge">
+            <span>http://airmonitor.local</span>
+            <button class="copy-btn" onclick="copyText('http://airmonitor.local', this)" title="Copy mDNS URL">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -327,7 +346,7 @@
         </div>
         <div>
           <strong>Local access only</strong>
-          <span>This dashboard is served directly by the ESP32 microcontroller. No internet connectivity, external cloud, or subscription account required.</span>
+          <span>This dashboard is served directly by the ESP32 microcontroller or via Netlify Cloud Edge. No external database or subscription required.</span>
         </div>
       </div>
     </section>

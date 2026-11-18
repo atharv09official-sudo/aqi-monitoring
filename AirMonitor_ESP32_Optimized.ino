@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Wire.h>
+#include <ESPmDNS.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_INA219.h>
 #include <LiquidCrystal_I2C.h>
@@ -25,20 +26,28 @@ bool fsOK = false;
 #define LDR_PIN           35
 #define BUZZER_PIN        25
 
-#define TEMP_LIMIT        45.0f
+#define DEFAULT_TEMP_LIMIT 45.0f
 #define BUZZER_LOW_HZ     1000
 #define BUZZER_HIGH_HZ    2000
 #define BUZZER_STEP_MS    300
 
-// Set true only after wiring INA219 VIN+/VIN- in series with the load
+// Set true if INA219 VIN+ / VIN- is wired in series with the monitored load
 #define INA_CONNECTED_TO_LOAD false
 
 // ============================================================
-//  WIFI — ACCESS POINT (hotspot)
+//  WIFI CONFIGURATION
+//  Runs Access Point (hotspot) by default.
+//  Optionally connects to your local Wi-Fi if STA_SSID is set.
 // ============================================================
 
 const char* AP_NAME     = "buildx123";
 const char* AP_PASSWORD = "buildx123";
+
+// Optional: Set your home/office Wi-Fi to enable dual-mode (AP + Station)
+const char* STA_SSID     = "";      // e.g. "Home_WiFi"
+const char* STA_PASSWORD = "";      // e.g. "Password123"
+
+const char* MDNS_HOSTNAME = "airmonitor"; // Access at http://airmonitor.local
 
 WebServer server(80);
 
@@ -54,16 +63,18 @@ LiquidCrystal_I2C lcd(LCD_ADDRESS, 16, 2);
 //  STATE
 // ============================================================
 
-bool  bmpOK       = false;
-bool  inaOK       = false;
-bool  alarmActive = false;
+bool  bmpOK        = false;
+bool  inaOK        = false;
+bool  alarmActive  = false;
+bool  buzzerMuted  = false;
 
-float temperature = 0.0f;
-float pressure    = 0.0f;
-float dustVoltage = 0.0f;
-float dustDensity = 0.0f;
-float busVoltage  = 0.0f;
-float currentMA   = 0.0f;
+float tempLimit    = DEFAULT_TEMP_LIMIT;
+float temperature  = 0.0f;
+float pressure     = 0.0f;
+float dustVoltage  = 0.0f;
+float dustDensity  = 0.0f;
+float busVoltage   = 0.0f;
+float currentMA    = 0.0f;
 
 int     ldrState    = HIGH;
 uint8_t lcdPage     = 0;
@@ -86,7 +97,7 @@ void lcdLine(uint8_t row, const char* text) {
 }
 
 // ============================================================
-//  LCD PAGES  (7 pages, rotates every 3 s)
+//  LCD PAGES (7 pages, rotates every 3 s)
 // ============================================================
 
 void updateLCD() {
@@ -130,17 +141,22 @@ void updateLCD() {
       lcdLine(0, "INA219 STATUS");
       if (!inaOK)
         lcdLine(1, "NOT DETECTED");
-      else if (!INA_CONNECTED_TO_LOAD)
-        lcdLine(1, "NOT CONFIGURED");
-      else {
-        snprintf(line, sizeof(line), "%.1fV %.0fmA", busVoltage, currentMA);
+      else if (!INA_CONNECTED_TO_LOAD) {
+        snprintf(line, sizeof(line), "%.2fV (No Load)", busVoltage);
+        lcdLine(1, line);
+      } else {
+        snprintf(line, sizeof(line), "%.2fV %.0fmA", busVoltage, currentMA);
         lcdLine(1, line);
       }
       break;
 
     default:                              // --- System status ---
       lcdLine(0, "SYSTEM STATUS");
-      lcdLine(1, alarmActive ? "!! TEMP ALERT !!" : "ALL NORMAL");
+      if (alarmActive) {
+        lcdLine(1, buzzerMuted ? "! TEMP (MUTED) !" : "!! TEMP ALERT !!");
+      } else {
+        lcdLine(1, "ALL NORMAL");
+      }
       break;
   }
 
@@ -148,7 +164,7 @@ void updateLCD() {
 }
 
 // ============================================================
-//  DUST SENSOR  (GP2Y1010AU0F + 10k/20k voltage divider)
+//  DUST SENSOR (GP2Y1010AU0F + 10k/20k voltage divider)
 // ============================================================
 
 float readDustVoltage() {
@@ -188,37 +204,42 @@ void readSensors() {
   dustDensity = estimateDust(dustVoltage);
   ldrState    = digitalRead(LDR_PIN);
 
-  if (inaOK && INA_CONNECTED_TO_LOAD) {
+  if (inaOK) {
     busVoltage = ina219.getBusVoltage_V();
-    currentMA  = ina219.getCurrent_mA();
+    if (INA_CONNECTED_TO_LOAD) {
+      currentMA = ina219.getCurrent_mA();
+    } else {
+      currentMA = 0.0f;
+    }
   }
 
-  alarmActive = bmpOK && (temperature >= TEMP_LIMIT);
+  alarmActive = bmpOK && (temperature >= tempLimit);
 
-  const char* aqi = dustDensity < 35.0f ? "Good"
+  const char* aqi = dustDensity < 35.0f  ? "Good"
                   : dustDensity < 150.0f ? "Moderate"
                   : "Unhealthy";
 
   Serial.printf(
-    "Temp:%.2fC | Pres:%.1fhPa | Dust:%.3fV %.0fug/m3(%s) | LDR:%s | Alarm:%s\n",
+    "Temp:%.2fC | Pres:%.1fhPa | Dust:%.3fV %.0fug/m3(%s) | LDR:%s | Bus:%.2fV | Alarm:%s\n",
     bmpOK ? temperature : -999.0f,
     bmpOK ? pressure    : -999.0f,
     dustVoltage, dustDensity, aqi,
     ldrState == LOW ? "DARK" : "BRIGHT",
-    alarmActive ? "ACTIVE" : "NORMAL"
+    inaOK ? busVoltage : 0.0f,
+    alarmActive ? (buzzerMuted ? "ACTIVE(MUTED)" : "ACTIVE") : "NORMAL"
   );
 }
 
 // ============================================================
-//  BUZZER  —  two-tone alarm  (ESP32 Core v3.x)
+//  BUZZER — two-tone alarm (ESP32 Core v3.x API)
 //  IMPORTANT: Requires a PASSIVE piezo buzzer.
-//  ledcAttach(pin, freq, resolution) — no channel number in v3.x.
-//  ledcWriteTone(pin, freq) drives the actual tone frequency.
+//  ledcAttach(pin, freq, resolution)
+//  ledcWriteTone(pin, freq)
 // ============================================================
 
 void updateBuzzer() {
 
-  if (!alarmActive) {
+  if (!alarmActive || buzzerMuted) {
     ledcWrite(BUZZER_PIN, 0);   // duty = 0 → silence
     buzzerPhase = 0;
     return;
@@ -233,20 +254,21 @@ void updateBuzzer() {
 
 // ============================================================
 //  JSON API SERIALIZATION
-//  Compatible with both /api/data and /api/sensors
 // ============================================================
 
 String makeSensorJSON() {
   String json;
-  json.reserve(550);
+  json.reserve(650);
 
   const char* aqi = dustDensity < 35.0f  ? "Good"
                   : dustDensity < 150.0f ? "Moderate"
                   : "Unhealthy";
 
   const char* alertStr = alarmActive ? "Warning" : "Normal";
-  const char* alertMsg = alarmActive ? "High temperature limit exceeded! Check cooling."
+  const char* alertMsg = alarmActive ? (buzzerMuted ? "High temperature alert active (buzzer muted)." : "High temperature limit exceeded! Check system cooling.")
                                      : "All monitored values are within the configured limits.";
+
+  float pwr = (inaOK && INA_CONNECTED_TO_LOAD) ? (busVoltage * currentMA) : 0.0f;
 
   json  = "{";
   // Primary Dashboard fields expected by app.js
@@ -255,44 +277,46 @@ String makeSensorJSON() {
   json += ",\"dust\":";              json += String(dustDensity, 0);
   json += ",\"airQuality\":\"";      json += aqi;
   json += "\",\"light\":\"";         json += (ldrState == LOW) ? "Dark" : "Bright";
-  json += "\",\"voltage\":";
-  json += (inaOK && INA_CONNECTED_TO_LOAD) ? String(busVoltage, 2) : (inaOK ? "0.00" : "null");
-  json += ",\"current\":";
-  json += (inaOK && INA_CONNECTED_TO_LOAD) ? String(currentMA, 1)  : (inaOK ? "0.0" : "null");
+  json += "\",\"voltage\":";         json += inaOK ? String(busVoltage, 2) : "null";
+  json += ",\"current\":";           json += (inaOK && INA_CONNECTED_TO_LOAD) ? String(currentMA, 1) : "0.0";
+  json += ",\"power_mW\":";          json += String(pwr, 1);
   json += ",\"ina219\":";            json += inaOK ? "true" : "false";
-  json += ",\"buzzer\":";            json += alarmActive ? "true" : "false";
+  json += ",\"buzzer\":";            json += (alarmActive && !buzzerMuted) ? "true" : "false";
+  json += ",\"buzzer_muted\":";      json += buzzerMuted ? "true" : "false";
   json += ",\"alert\":\"";           json += alertStr;
   json += "\",\"alertMessage\":\"";  json += alertMsg;
   json += "\",\"systemOnline\":true";
 
-  // Extended fields for telemetry & backward compatibility
+  // Extended telemetry & backward compatibility fields
   json += ",\"dust_voltage\":";      json += String(dustVoltage, 3);
   json += ",\"dust_density_ugm3\":"; json += String(dustDensity, 1);
   json += ",\"aqi_level\":\"";       json += aqi;
   json += "\",\"ldr\":\"";           json += (ldrState == LOW) ? "DARK" : "BRIGHT";
   json += "\",\"ina219_detected\":"; json += inaOK ? "true" : "false";
   json += ",\"ina_configured\":";    json += INA_CONNECTED_TO_LOAD ? "true" : "false";
-  json += ",\"current_mA\":";
-  json += (inaOK && INA_CONNECTED_TO_LOAD) ? String(currentMA, 2) : (inaOK ? "0.00" : "null");
+  json += ",\"current_mA\":";        json += (inaOK && INA_CONNECTED_TO_LOAD) ? String(currentMA, 2) : "0.00";
   json += ",\"alarm_active\":";      json += alarmActive ? "true" : "false";
+  json += ",\"temp_limit\":";        json += String(tempLimit, 1);
   json += ",\"uptime_ms\":";         json += String(millis());
+  json += ",\"free_heap\":";         json += String(ESP.getFreeHeap());
+  json += ",\"wifi_clients\":";      json += String(WiFi.softAPgetStationNum());
   json += ",\"ip\":\"192.168.4.1\"";
   json += "}";
 
   return json;
 }
 
-void sendJSON(const String& body) {
+void sendJSON(const String& body, int code = 200) {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Origin, Accept");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Origin, Accept, Authorization");
   server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  server.send(200, "application/json", body);
+  server.send(code, "application/json", body);
 }
 
 // ============================================================
 //  WEB DASHBOARD (PROGMEM — Modern Light Theme Default)
-//  Used when flash filesystem files are not uploaded
+//  Includes Hardware Controls (Mute, Buzzer Test, Refresh)
 // ============================================================
 
 static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
@@ -327,11 +351,13 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
   header{display:flex;justify-content:space-between;align-items:center;padding:10px 4px 18px;border-bottom:1px solid var(--border);margin-bottom:18px}
   .brand{font-size:1.15rem;font-weight:800;letter-spacing:-.02em;display:flex;align-items:center;gap:8px}
   .brand-badge{background:var(--primary);color:#fff;border-radius:8px;padding:3px 7px;font-size:.85rem}
-  .header-actions{display:flex;align-items:center;gap:10px}
+  .header-actions{display:flex;align-items:center;gap:8px}
   .status-pill{font-size:.75rem;font-weight:600;padding:5px 10px;border-radius:99px;background:var(--good-bg);border:1px solid var(--good-border);color:var(--good);display:flex;align-items:center;gap:6px}
   .status-pill.stale{background:var(--bad-bg);border-color:var(--bad-border);color:var(--bad)}
   .pulse-dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
-  .theme-btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 9px;cursor:pointer;font-size:.85rem}
+  .btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:.8rem;font-weight:600;transition:all .15s}
+  .btn:hover{border-color:var(--primary);color:var(--primary)}
+  .btn-danger{background:var(--bad-bg);border-color:var(--bad-border);color:var(--bad)}
   #alarm-banner{display:none;background:var(--bad-bg);border:1px solid var(--bad-border);color:var(--bad);border-radius:12px;padding:12px 14px;font-weight:700;font-size:.9rem;margin-bottom:16px;text-align:center;animation:pulse 1s infinite alternate}
   @keyframes pulse{from{opacity:1}to{opacity:.6}}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
@@ -349,6 +375,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
   .power-table td{padding:5px 0;color:var(--text-sub);border-bottom:1px solid var(--border)}
   .power-table td:last-child{text-align:right;font-weight:700;color:var(--text)}
   .power-table tr:last-child td{border-bottom:none}
+  .controls-bar{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
   footer{text-align:center;margin-top:22px;font-size:.75rem;color:var(--muted)}
 </style>
 </head>
@@ -360,7 +387,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
     </div>
     <div class="header-actions">
       <div class="status-pill" id="connPill"><span class="pulse-dot"></span><span id="connText">Live</span></div>
-      <button class="theme-btn" id="themeBtn" title="Toggle Theme">&#9790;</button>
+      <button class="btn" id="themeBtn" title="Toggle Theme">&#9790;</button>
     </div>
   </header>
 
@@ -370,7 +397,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
     <div class="card">
       <div class="card-label">Temperature</div>
       <div class="val" id="temp">--<small>°C</small></div>
-      <div class="card-sub" id="temp-sub">Ambient reading</div>
+      <div class="card-sub" id="temp-sub">Limit: 45°C</div>
     </div>
     <div class="card">
       <div class="card-label">Pressure</div>
@@ -388,9 +415,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
       <div class="card-sub">LDR Sensor</div>
     </div>
     <div class="card">
-      <div class="card-label">INA219 Status</div>
+      <div class="card-label">INA219 Rail</div>
       <div class="val" id="ina-stat" style="font-size:1.2rem">--</div>
-      <div class="card-sub" id="ina-sub">I2C Power Monitor</div>
+      <div class="card-sub" id="ina-sub">Bus Monitor</div>
     </div>
     <div class="card full">
       <div class="card-label">Power Rail Telemetry</div>
@@ -402,13 +429,24 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
     </div>
   </div>
 
+  <div class="card full">
+    <div class="card-label">Hardware Actions</div>
+    <div class="controls-bar">
+      <button class="btn" id="testBuzzerBtn" onclick="testBuzzer()">Test Alarm</button>
+      <button class="btn" id="muteBuzzerBtn" onclick="toggleMute()">Mute Buzzer</button>
+      <button class="btn" onclick="scanI2C()">Scan I2C Bus</button>
+    </div>
+    <div class="card-sub" id="i2c-result" style="margin-top:8px"></div>
+  </div>
+
   <footer>
-    BUILDX AIR MONITOR &middot; http://192.168.4.1 &middot; Polled every 2s
+    BUILDX AIR MONITOR &middot; http://192.168.4.1 &middot; mDNS: airmonitor.local
   </footer>
 
   <script>
     const $ = id => document.getElementById(id);
     let fails = 0;
+    let isMuted = false;
 
     // Theme Toggle
     const themeBtn = $('themeBtn');
@@ -465,9 +503,18 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
           $('pwr').textContent = '--';
         }
 
-        // Alarm banner
-        const isAlarm = d.buzzer || d.alarm_active;
+        // Alarm banner & Mute state
+        isMuted = !!d.buzzer_muted;
+        $('muteBuzzerBtn').textContent = isMuted ? 'Unmute Buzzer' : 'Mute Buzzer';
+        $('muteBuzzerBtn').className = isMuted ? 'btn btn-danger' : 'btn';
+
+        const isAlarm = d.alarm_active || d.buzzer;
         $('alarm-banner').style.display = isAlarm ? 'block' : 'none';
+        if (isAlarm && isMuted) {
+          $('alarm-banner').textContent = '⚠️ HIGH TEMPERATURE ALARM ACTIVE (MUTED)';
+        } else if (isAlarm) {
+          $('alarm-banner').textContent = '⚠️ HIGH TEMPERATURE ALARM ACTIVE';
+        }
 
         $('connPill').className = 'status-pill';
         $('connText').textContent = 'Live';
@@ -479,6 +526,32 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
         }
       }
     }
+
+    async function testBuzzer() {
+      try {
+        await fetch('/api/buzzer/test');
+      } catch (e) {}
+    }
+
+    async function toggleMute() {
+      try {
+        await fetch(isMuted ? '/api/buzzer/unmute' : '/api/buzzer/mute');
+        poll();
+      } catch (e) {}
+    }
+
+    async function scanI2C() {
+      const el = $('i2c-result');
+      el.textContent = 'Scanning I2C bus…';
+      try {
+        const r = await fetch('/api/i2c/scan');
+        const d = await r.json();
+        el.textContent = 'Found I2C devices: ' + (d.devices.length ? d.devices.join(', ') : 'None');
+      } catch (e) {
+        el.textContent = 'I2C scan failed.';
+      }
+    }
+
     poll();
     setInterval(poll, 2000);
   </script>
@@ -527,78 +600,159 @@ void handleJS() {
 }
 
 // ============================================================
-//  WIFI + SERVER
+//  WIFI + SERVER INITIALIZATION
 // ============================================================
 
 void startWiFiAndServer() {
 
-  WiFi.mode(WIFI_AP);
+  // Dual mode if STA credentials provided, else AP only
+  if (strlen(STA_SSID) > 0) {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(STA_SSID, STA_PASSWORD);
+    Serial.printf("Connecting to Wi-Fi: %s ...\n", STA_SSID);
+  } else {
+    WiFi.mode(WIFI_AP);
+  }
+
   WiFi.setSleep(false);
-  bool ok = WiFi.softAP(AP_NAME, AP_PASSWORD);
+  bool apOk = WiFi.softAP(AP_NAME, AP_PASSWORD);
 
   Serial.println("\n===== WIFI ACCESS POINT =====");
-  Serial.printf("AP started : %s\n", ok ? "YES" : "NO");
+  Serial.printf("AP started : %s\n", apOk ? "YES" : "NO");
   Serial.printf("SSID       : %s\n", AP_NAME);
-  Serial.printf("IP         : %s\n", WiFi.softAPIP().toString().c_str());
+  Serial.printf("AP IP      : %s\n", WiFi.softAPIP().toString().c_str());
+
+  // mDNS Responder (allows http://airmonitor.local)
+  if (MDNS.begin(MDNS_HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("mDNS name  : http://%s.local\n", MDNS_HOSTNAME);
+  }
 
   // ------------------------------------------------------------
   // Web Pages & Static Assets
   // ------------------------------------------------------------
-  server.on("/",          HTTP_GET, handleRoot);
+  server.on("/",           HTTP_GET, handleRoot);
   server.on("/index.html", HTTP_GET, handleRoot);
   server.on("/style.css",  HTTP_GET, handleCSS);
   server.on("/app.js",     HTTP_GET, handleJS);
 
   // ------------------------------------------------------------
-  // REST API Endpoints
+  // Telemetry Endpoints
   // ------------------------------------------------------------
-  // Main telemetry endpoint polled by dashboard client (app.js)
+  // 1. Primary telemetry endpoint polled by app.js
   server.on("/api/data", HTTP_GET, []() {
     sendJSON(makeSensorJSON());
   });
 
-  // Sensor endpoint for backward compatibility with existing clients
+  // 2. Sensor endpoint for backward compatibility
   server.on("/api/sensors", HTTP_GET, []() {
     sendJSON(makeSensorJSON());
   });
 
-  // System & network status endpoint
+  // 3. Fast lightweight healthcheck
+  server.on("/api/ping", HTTP_GET, []() {
+    sendJSON("{\"pong\":true,\"uptime_ms\":" + String(millis()) + "}");
+  });
+
+  // 4. System & network diagnostics
   server.on("/api/status", HTTP_GET, []() {
     String status;
-    status.reserve(220);
+    status.reserve(280);
     status  = "{\"status\":\"online\",\"device\":\"ESP32 Air Monitor\"";
     status += ",\"uptime_ms\":"; status += String(millis());
+    status += ",\"free_heap\":"; status += String(ESP.getFreeHeap());
     status += ",\"clients\":";   status += String(WiFi.softAPgetStationNum());
-    status += ",\"temp_limit\":"; status += String(TEMP_LIMIT, 1);
+    status += ",\"temp_limit\":"; status += String(tempLimit, 1);
     status += ",\"alarm_active\":"; status += alarmActive ? "true" : "false";
+    status += ",\"buzzer_muted\":"; status += buzzerMuted ? "true" : "false";
     status += ",\"ap_ssid\":\""; status += AP_NAME; status += "\"";
+    status += ",\"sta_ip\":\"";  status += WiFi.localIP().toString(); status += "\"";
     status += "}";
     sendJSON(status);
   });
 
-  // Device hardware & I2C bus info endpoint
+  // 5. Hardware bus & device inventory
   server.on("/api/device/info", HTTP_GET, []() {
     String info;
-    info.reserve(320);
-    info  = "{\"device\":\"ESP32 Air Monitor\",\"firmware\":\"v2.2-light-ui\"";
+    info.reserve(360);
+    info  = "{\"device\":\"ESP32 Air Monitor\",\"firmware\":\"v2.3-full-api\"";
     info += ",\"lcd\":\"0x27\",\"lcd_ok\":true";
     info += ",\"bmp280\":\"0x76\",\"bmp_connected\":"; info += bmpOK ? "true" : "false";
     info += ",\"ina219\":\"0x40\",\"ina_connected\":"; info += inaOK ? "true" : "false";
     info += ",\"ina_configured\":"; info += INA_CONNECTED_TO_LOAD ? "true" : "false";
-    info += ",\"temp_limit\":"; info += String(TEMP_LIMIT, 1);
+    info += ",\"temp_limit\":"; info += String(tempLimit, 1);
     info += ",\"dust_pin\":"; info += String(DUST_PIN);
     info += ",\"ldr_pin\":"; info += String(LDR_PIN);
     info += ",\"buzzer_pin\":"; info += String(BUZZER_PIN);
+    info += ",\"mdns\":\""; info += MDNS_HOSTNAME; info += ".local\"";
     info += "}";
     sendJSON(info);
   });
 
-  // Test buzzer endpoint (triggers a 200ms tone)
+  // ------------------------------------------------------------
+  // Interactive Hardware Control Endpoints
+  // ------------------------------------------------------------
+  // 6. Test Buzzer Tone
   server.on("/api/buzzer/test", HTTP_GET, []() {
     ledcWriteTone(BUZZER_PIN, 1500);
     delay(200);
     ledcWrite(BUZZER_PIN, 0);
     sendJSON("{\"buzzer_test\":\"success\"}");
+  });
+
+  // 7. Mute Buzzer Alarm
+  server.on("/api/buzzer/mute", HTTP_GET, []() {
+    buzzerMuted = true;
+    ledcWrite(BUZZER_PIN, 0);
+    sendJSON("{\"buzzer_muted\":true}");
+  });
+
+  // 8. Unmute Buzzer Alarm
+  server.on("/api/buzzer/unmute", HTTP_GET, []() {
+    buzzerMuted = false;
+    sendJSON("{\"buzzer_muted\":false}");
+  });
+
+  // 9. Live I2C Bus Scanner (scans addresses 0x01 through 0x7E)
+  server.on("/api/i2c/scan", HTTP_GET, []() {
+    String json = "{\"devices\":[";
+    bool first = true;
+    for (uint8_t addr = 1; addr < 127; addr++) {
+      Wire.beginTransmission(addr);
+      if (Wire.endTransmission() == 0) {
+        if (!first) json += ",";
+        char hex[8];
+        snprintf(hex, sizeof(hex), "\"0x%02X\"", addr);
+        json += hex;
+        first = false;
+      }
+    }
+    json += "]}";
+    sendJSON(json);
+  });
+
+  // 10. Dynamic Temp Limit Configuration
+  server.on("/api/config", HTTP_GET, []() {
+    if (server.hasArg("temp_limit")) {
+      float newLimit = server.arg("temp_limit").toFloat();
+      if (newLimit >= 20.0f && newLimit <= 85.0f) {
+        tempLimit = newLimit;
+        alarmActive = bmpOK && (temperature >= tempLimit);
+      }
+    }
+    String config = "{\"temp_limit\":";
+    config += String(tempLimit, 1);
+    config += ",\"buzzer_muted\":";
+    config += buzzerMuted ? "true" : "false";
+    config += "}";
+    sendJSON(config);
+  });
+
+  // 11. Soft Reboot
+  server.on("/api/reboot", HTTP_POST, []() {
+    sendJSON("{\"reboot\":\"initiated\"}");
+    delay(500);
+    ESP.restart();
   });
 
   // ------------------------------------------------------------
@@ -608,7 +762,7 @@ void startWiFiAndServer() {
     if (server.method() == HTTP_OPTIONS) {
       server.sendHeader("Access-Control-Allow-Origin", "*");
       server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Origin, Accept");
+      server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Origin, Accept, Authorization");
       server.send(204);
     } else {
       server.send(404, "text/plain", "Not Found");
@@ -616,8 +770,7 @@ void startWiFiAndServer() {
   });
 
   server.begin();
-  Serial.println("HTTP server : http://192.168.4.1");
-  Serial.println("Endpoints   : /api/data, /api/sensors, /api/status, /api/device/info");
+  Serial.println("HTTP server ready at http://192.168.4.1");
 }
 
 // ============================================================
@@ -633,7 +786,6 @@ void setup() {
   digitalWrite(DUST_LED_PIN, LOW);
 
   // Buzzer — ESP32 Core v3.x API
-  // ledcAttach(pin, initialFreq, resolution) — no channel number
   ledcAttach(BUZZER_PIN, 1000, 8);
   ledcWrite(BUZZER_PIN, 0);   // silent at startup
 

@@ -1,13 +1,6 @@
 /*
   Air Monitoring System Dashboard Script
-  Supports Light & Dark themes, Live ESP32 polling, and Demo simulation mode.
-  Expected GET /api/data or /api/sensors JSON format:
-  {
-    "temperature": 26.4, "pressure": 1012.6, "dust": 58,
-    "airQuality": "Good", "light": "Bright",
-    "voltage": 5.04, "current": 122.5, "ina219": true,
-    "buzzer": false, "alert": "Normal", "systemOnline": true
-  }
+  Supports Light & Dark themes, Live ESP32 polling, Hardware Controls, and Netlify / Demo simulation mode.
 */
 
 const API_URL = "/api/data";
@@ -17,13 +10,13 @@ const $ = id => document.getElementById(id);
 let receivedData = false;
 let isDemoMode = false;
 let refreshTimer = null;
+let isBuzzerMuted = false;
 
 // ==========================================================================
 // Theme Management (Light Theme by Default)
 // ==========================================================================
 function initTheme() {
   const savedTheme = localStorage.getItem("theme");
-  // Default to light theme as requested
   const theme = savedTheme ? savedTheme : "light";
   applyTheme(theme);
 
@@ -87,6 +80,56 @@ function showCopyFeedback(btn) {
 }
 
 // ==========================================================================
+// Hardware Action Controls (Buzzer, Mute, I2C Bus Scan)
+// ==========================================================================
+window.testBuzzer = async function() {
+  try {
+    const res = await fetch("/api/buzzer/test");
+    if (res.ok) {
+      alert("Buzzer test tone sent to ESP32.");
+    }
+  } catch (e) {
+    alert("Buzzer test: Connect to ESP32 Wi-Fi (buildx123).");
+  }
+};
+
+window.toggleMute = async function() {
+  try {
+    const nextEndpoint = isBuzzerMuted ? "/api/buzzer/unmute" : "/api/buzzer/mute";
+    const res = await fetch(nextEndpoint);
+    if (res.ok) {
+      const data = await res.json();
+      isBuzzerMuted = data.buzzer_muted;
+      updateMuteButton(isBuzzerMuted);
+    }
+  } catch (e) {
+    isBuzzerMuted = !isBuzzerMuted;
+    updateMuteButton(isBuzzerMuted);
+  }
+};
+
+function updateMuteButton(muted) {
+  const btn = $("muteBtn");
+  if (btn) {
+    btn.textContent = muted ? "Unmute Alarm" : "Mute Alarm";
+  }
+}
+
+window.scanI2C = async function() {
+  const el = $("i2cScanResult");
+  if (!el) return;
+  el.textContent = "Scanning I2C bus on pins 21/22…";
+  try {
+    const res = await fetch("/api/i2c/scan");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    el.textContent = "Found I2C devices: " + (data.devices?.length ? data.devices.join(", ") : "None detected");
+  } catch (e) {
+    el.textContent = "I2C scan: Active when connected to ESP32 hardware.";
+  }
+};
+
+// ==========================================================================
 // Dashboard Value Updaters
 // ==========================================================================
 function setText(id, value, digits) {
@@ -141,7 +184,7 @@ function updateAlertCard(data) {
 }
 
 function updateDashboard(data) {
-  // Environmental readings (support both API field styles)
+  // Environmental readings
   setText("temperature", data.temperature, 1);
   setText("pressure", data.pressure, 1);
   
@@ -157,7 +200,7 @@ function updateDashboard(data) {
   // Temperature status badge
   const tempStatus = $("tempStatus");
   if (tempStatus && typeof data.temperature === "number") {
-    if (data.temperature >= 35) {
+    if (data.temperature >= 40) {
       tempStatus.textContent = "High temp alert";
       tempStatus.className = "metric-badge warning";
     } else if (data.temperature < 16) {
@@ -197,9 +240,10 @@ function updateDashboard(data) {
   setText("current", currentVal, 1);
 
   // Power Calculation (mW)
-  if (typeof voltageVal === "number" && typeof currentVal === "number") {
-    const powerMw = (voltageVal * currentVal).toFixed(1);
-    setText("powerCalc", powerMw);
+  if (data.power_mW !== undefined && data.power_mW !== null) {
+    setText("powerCalc", data.power_mW);
+  } else if (typeof voltageVal === "number" && typeof currentVal === "number") {
+    setText("powerCalc", (voltageVal * currentVal).toFixed(1));
   } else {
     setText("powerCalc", "--");
   }
@@ -214,7 +258,14 @@ function updateDashboard(data) {
 
   // Diagnostics & Alarm
   const isAlarm = data.buzzer !== undefined ? data.buzzer : data.alarm_active;
-  setText("buzzerStatus", isAlarm === true ? "Alarm sounding" : isAlarm === false ? "Inactive" : "--");
+  isBuzzerMuted = !!data.buzzer_muted;
+  updateMuteButton(isBuzzerMuted);
+
+  if (isAlarm) {
+    setText("buzzerStatus", isBuzzerMuted ? "Alarm active (Muted)" : "Alarm sounding");
+  } else {
+    setText("buzzerStatus", isBuzzerMuted ? "Inactive (Muted)" : "Inactive");
+  }
   
   const systemStatus = $("systemStatus");
   if (systemStatus) {
@@ -227,7 +278,7 @@ function updateDashboard(data) {
 
   const now = new Date();
   setText("lastUpdate", now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-  setText("dataMode", isDemoMode ? "Simulation active" : "ESP32 Live Stream");
+  setText("dataMode", isDemoMode ? "Simulation active" : "Live stream");
   setText("refreshLabel", "Telemetry refreshed every " + (REFRESH_MS / 1000) + "s");
 
   receivedData = true;
@@ -253,8 +304,10 @@ function generateDemoData() {
     light: "Bright",
     voltage: 5.04 + (Math.random() * 0.04 - 0.02),
     current: 124.2 + currentJitter,
+    power_mW: ((5.04) * (124.2 + currentJitter)).toFixed(1),
     ina219: true,
     buzzer: false,
+    buzzer_muted: isBuzzerMuted,
     alert: "Normal",
     alertMessage: "All environmental parameters and power rails are optimal.",
     systemOnline: true
@@ -299,7 +352,6 @@ async function refreshData() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 1800);
 
-    // Try primary API_URL ("/api/data"), fallback to "/api/sensors" if needed
     let response = await fetch(API_URL, {
       cache: "no-store",
       signal: controller.signal
@@ -324,7 +376,7 @@ async function refreshData() {
     
     if (!receivedData) {
       setText("alertTitle", "Waiting for ESP32 connection");
-      setText("alertMessage", "Connect your device to Wi-Fi 'buildx123' and open http://192.168.4.1. Tap 'Simulate' above to preview.");
+      setText("alertMessage", "Connect to Wi-Fi 'buildx123' or use http://airmonitor.local. Tap 'Simulate' to preview.");
     }
   }
 }
