@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f8fafc">
+  <title>Air Monitoring System · BuildX Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header / Navigation Bar -->
+  <header class="topbar">
+    <a class="brand" href="#home" aria-label="BuildX AirMonitor Home">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+        </svg>
+      </div>
+      <div class="brand-title">
+        <span>Air</span><span class="muted">Monitor</span>
+      </div>
+    </a>
+
+    <div class="topbar-actions">
+      <!-- Demo Simulation Switch -->
+      <button class="demo-pill-btn" id="demoToggle" title="Toggle realistic simulation data">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        <span id="demoToggleText">Simulate</span>
+      </button>
+
+      <!-- Connection Status Badge -->
+      <span class="connection" id="connectionBadge">
+        <i id="connectionDot"></i>
+        <span id="connectionText">Connecting…</span>
+      </span>
+
+      <!-- Theme Switcher (Light / Dark) -->
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle Light/Dark Theme">
+        <!-- Sun Icon (for switching to light) -->
+        <svg id="sunIcon" style="display:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <!-- Moon Icon (for switching to dark) -->
+        <svg id="moonIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero / Intro Section -->
+    <section class="hero" id="home">
+      <div class="eyebrow">
+        <span class="pulse"></span>
+        BUILDX INNOVATIONS · IOT TELEMETRY
+      </div>
+      <h1>Know the air<br><em>around you.</em></h1>
+      <p>Real-time environmental readings, instant status alerts, and hardware power diagnostics delivered directly to your device.</p>
+      
+      <div class="hero-actions">
+        <a class="primary-btn" href="#dashboard">
+          <span>Open live dashboard</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="7" y1="17" x2="17" y2="7"></line>
+            <polyline points="7 7 17 7 17 17"></polyline>
+          </svg>
+        </a>
+        <a class="secondary-btn" href="#setup">
+          <span>Quick setup guide</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </a>
+      </div>
+
+      <div class="hero-foot">
+        <span>Local Device Access</span>
+        <span>Zero Cloud Dependency</span>
+        <span>2.0s Telemetry Polling</span>
+      </div>
+    </section>
+
+    <!-- Main Dashboard Section -->
+    <section class="dashboard section" id="dashboard">
+      <div class="section-heading">
+        <div>
+          <div class="eyebrow">REAL-TIME OVERVIEW</div>
+          <h2>Environmental dashboard</h2>
+        </div>
+        <span class="live-tag"><i></i> LIVE</span>
+      </div>
+
+      <!-- Alert Banner -->
+      <div class="alert-card" id="alertCard">
+        <div class="alert-icon" id="alertIcon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+        <div class="alert-content">
+          <strong id="alertTitle">System status</strong>
+          <p id="alertMessage">Connecting to device sensors…</p>
+        </div>
+      </div>
+
+      <!-- Primary Metrics Grid -->
+      <div class="metrics">
+        <!-- Metric 1: Temperature -->
+        <article class="metric-card metric-temp">
+          <div class="metric-header">
+            <div class="metric-label">
+              <div class="metric-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path>
+                </svg>
+              </div>
+              <span>Temperature</span>
+            </div>
+          </div>
+          <div class="metric-value">
+            <span id="temperature">--</span><small>°C</small>
+          </div>
+          <div class="metric-footer">
+            <span class="metric-note">Ambient reading</span>
+            <span class="metric-badge" id="tempStatus">Normal range</span>
+          </div>
+        </article>
+
+        <!-- Metric 2: Pressure -->
+        <article class="metric-card metric-pressure">
+          <div class="metric-header">
+            <div class="metric-label">
+              <div class="metric-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+              </div>
+              <span>Barometric Pressure</span>
+            </div>
+          </div>
+          <div class="metric-value">
+            <span id="pressure">--</span><small>hPa</small>
+          </div>
+          <div class="metric-footer">
+            <span class="metric-note">Atmospheric level</span>
+            <span class="metric-badge" id="pressureStatus">1013.25 sea-level std</span>
+          </div>
+        </article>
+
+        <!-- Metric 3: Dust & Air Quality -->
+        <article class="metric-card metric-dust">
+          <div class="metric-header">
+            <div class="metric-label">
+              <div class="metric-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"></path>
+                </svg>
+              </div>
+              <span>Dust Concentration</span>
+            </div>
+          </div>
+          <div class="metric-value">
+            <span id="dust">--</span><small id="dustUnit">raw</small>
+          </div>
+          <div class="metric-footer">
+            <span class="metric-note" id="airQuality">Air quality: --</span>
+            <span class="metric-badge" id="dustBadge">Monitoring</span>
+          </div>
+        </article>
+
+        <!-- Metric 4: Ambient Light -->
+        <article class="metric-card metric-light">
+          <div class="metric-header">
+            <div class="metric-label">
+              <div class="metric-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <path d="M12 2v2"></path>
+                  <path d="M12 20v2"></path>
+                  <path d="m4.93 4.93 1.41 1.41"></path>
+                  <path d="m17.66 17.66 1.41 1.41"></path>
+                  <path d="M2 12h2"></path>
+                  <path d="M20 12h2"></path>
+                  <path d="m6.34 17.66-1.41 1.41"></path>
+                  <path d="m19.07 4.93-1.41 1.41"></path>
+                </svg>
+              </div>
+              <span>Ambient Light</span>
+            </div>
+          </div>
+          <div class="metric-value text-value" id="light">--</div>
+          <div class="metric-footer">
+            <span class="metric-note">Photocell sensor</span>
+            <span class="metric-badge" id="lightBadge">Active</span>
+          </div>
+        </article>
+      </div>
+
+      <!-- Lower Panels (Electrical & System Information) -->
+      <div class="lower-grid">
+        <!-- Power Monitoring Panel -->
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <div class="eyebrow">ELECTRICAL RAIL</div>
+              <h3>Power monitoring</h3>
+            </div>
+            <span class="mini-status" id="inaStatus">Checking</span>
+          </div>
+          <div class="power-rows">
+            <div class="power-row">
+              <span>Bus voltage</span>
+              <strong><span id="voltage">--</span> <small>V</small></strong>
+            </div>
+            <div class="power-row">
+              <span>Current draw</span>
+              <strong><span id="current">--</span> <small>mA</small></strong>
+            </div>
+            <div class="power-row">
+              <span>Calculated power</span>
+              <strong><span id="powerCalc">--</span> <small>mW</small></strong>
+            </div>
+          </div>
+          <p class="panel-note">INA219 I2C digital power sensor live monitoring. Reports bus voltage, load current, and calculated dissipation.</p>
+        </article>
+
+        <!-- System Information Panel -->
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <div class="eyebrow">HARDWARE &amp; STATUS</div>
+              <h3>System diagnostics</h3>
+            </div>
+            <span class="mini-status good" id="systemStatus">Online check</span>
+          </div>
+          <div class="power-rows">
+            <div class="power-row">
+              <span>High-temp buzzer</span>
+              <strong id="buzzerStatus">--</strong>
+            </div>
+            <div class="power-row">
+              <span>Last telemetry sync</span>
+              <strong id="lastUpdate">--</strong>
+            </div>
+            <div class="power-row">
+              <span>Data transmission</span>
+              <strong id="dataMode">Waiting</strong>
+            </div>
+            <div class="power-row">
+              <span>Device local IP</span>
+              <strong><code>192.168.4.1</code></strong>
+            </div>
+          </div>
+          <p class="panel-note">Keep this client device connected to the BuildX local Wi-Fi hotspot for real-time telemetry.</p>
+        </article>
+      </div>
+
+      <div class="dashboard-footer">
+        <span>Hardware: BuildX Air Monitor Node V1.2</span>
+        <span id="refreshLabel">Refreshing every 2.0s</span>
+      </div>
+    </section>
+
+    <!-- Quick Setup Guide Section -->
+    <section class="how section" id="setup">
+      <div class="eyebrow">GETTING STARTED</div>
+      <h2>Connect in three steps.</h2>
+      
+      <div class="steps">
+        <div class="step-card">
+          <b>STEP 01</b>
+          <strong>Power on device</strong>
+          <p>Connect your assembled monitoring unit to a 5V USB-C power source.</p>
+          <div class="code-badge">5V DC / 500mA</div>
+        </div>
+
+        <div class="step-card">
+          <b>STEP 02</b>
+          <strong>Join device Wi-Fi</strong>
+          <p>Scan for the hotspot and enter the default credentials:</p>
+          <div class="code-badge">
+            <span>SSID: buildx123</span>
+            <button class="copy-btn" onclick="copyText('buildx123', this)" title="Copy Wi-Fi SSID">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <b>STEP 03</b>
+          <strong>Open dashboard</strong>
+          <p>In any browser, navigate directly to the local hotspot gateway:</p>
+          <div class="code-badge">
+            <span>http://192.168.4.1</span>
+            <button class="copy-btn" onclick="copyText('http://192.168.4.1', this)" title="Copy Gateway IP">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="note-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </div>
+        <div>
+          <strong>Local access only</strong>
+          <span>This dashboard is served directly by the ESP32 microcontroller. No internet connectivity, external cloud, or subscription account required.</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div>
+      <strong>BUILDX INNOVATIONS</strong> &middot; Air Monitoring Client Dashboard
+    </div>
+    <div>
+      <a href="#home">Back to top ↑</a>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
