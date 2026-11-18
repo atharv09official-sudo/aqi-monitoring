@@ -2,9 +2,36 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <ESPmDNS.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_INA219.h>
 #include <LiquidCrystal_I2C.h>
+
+// ============================================================
+//  CLOUD TELEMETRY TARGET (NETLIFY ENDPOINT)
+// ============================================================
+
+const char* CLOUD_TELEMETRY_URL = "https://aqi-monitoringv1.netlify.app/api/data";
+#define CLOUD_POST_INTERVAL_MS  2000 // Stream telemetry every 2 seconds
+
+// ============================================================
+//  WIFI CONFIGURATION
+//  Runs in Dual Mode (WIFI_AP_STA):
+//  1. Always runs AP "buildx123" at 192.168.4.1 (Local fallback)
+//  2. Connects to your Wi-Fi (Home/Hotspot) to upload real sensor data to Netlify
+// ============================================================
+
+const char* AP_NAME     = "buildx123";
+const char* AP_PASSWORD = "buildx123";
+
+// Enter your Wi-Fi network credentials so the ESP32 can connect to the internet:
+const char* STA_SSID     = "Your_WiFi_SSID";      // <-- Enter your Wi-Fi SSID
+const char* STA_PASSWORD = "Your_WiFi_Password";  // <-- Enter your Wi-Fi Password
+
+const char* MDNS_HOSTNAME = "airmonitor"; // Access at http://airmonitor.local
+
+WebServer server(80);
 
 // ============================================================
 //  PIN / DEVICE HARDWARE CONFIG
@@ -27,21 +54,6 @@
 
 // Set true if INA219 VIN+ / VIN- is wired in series with the monitored load
 #define INA_CONNECTED_TO_LOAD false
-
-// ============================================================
-//  WIFI CONFIGURATION
-// ============================================================
-
-const char* AP_NAME     = "buildx123";
-const char* AP_PASSWORD = "buildx123";
-
-// Optional: Set your home/office Wi-Fi for dual-mode (AP + Station)
-const char* STA_SSID     = "";      // e.g. "Home_WiFi"
-const char* STA_PASSWORD = "";      // e.g. "Password123"
-
-const char* MDNS_HOSTNAME = "airmonitor"; // Access at http://airmonitor.local
-
-WebServer server(80);
 
 // ============================================================
 //  HARDWARE SENSOR OBJECTS
@@ -75,6 +87,7 @@ int     buzzerPhase = 0;    // 0 = low tone, 1 = high tone
 unsigned long sensorTimer = 0;
 unsigned long lcdTimer    = 0;
 unsigned long buzzerTimer = 0;
+unsigned long cloudTimer  = 0;
 
 // ============================================================
 //  LCD 16x2 DISPLAY CONTROLLER
@@ -137,6 +150,15 @@ void updateLCD() {
       }
       break;
 
+    case 6:                               // --- Cloud Netlify status ---
+      lcdLine(0, "CLOUD NETLIFY");
+      if (WiFi.status() == WL_CONNECTED) {
+        lcdLine(1, "STREAMING ACTIVE");
+      } else {
+        lcdLine(1, "AP: buildx123");
+      }
+      break;
+
     default:                              // --- System status ---
       lcdLine(0, "SYSTEM STATUS");
       if (alarmActive) {
@@ -147,7 +169,7 @@ void updateLCD() {
       break;
   }
 
-  lcdPage = (lcdPage + 1) % 7;
+  lcdPage = (lcdPage + 1) % 8;
 }
 
 // ============================================================
@@ -305,18 +327,51 @@ void sendJSON(const String& body, int code = 200) {
 }
 
 // ============================================================
+//  CLOUD TELEMETRY TRANSMITTER (NETLIFY POST)
+// ============================================================
+
+void sendTelemetryToCloud() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return; // Wait until connected to home/hotspot Wi-Fi
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Netlify HTTPS endpoint; skip certificate validation on microcontroller
+
+  HTTPClient https;
+  if (https.begin(client, CLOUD_TELEMETRY_URL)) {
+    https.addHeader("Content-Type", "application/json");
+    https.addHeader("User-Agent", "BuildX-ESP32-IoT-Node");
+    https.setTimeout(3500);
+
+    String payload = makeSensorJSON();
+    int httpCode = https.POST(payload);
+
+    if (httpCode == 200 || httpCode == 201) {
+      Serial.printf("[Cloud Telemetry] Uploaded to Netlify -> HTTP %d OK\n", httpCode);
+    } else {
+      Serial.printf("[Cloud Telemetry] Upload failed: HTTP %d (%s)\n", httpCode, https.errorToString(httpCode).c_str());
+    }
+    https.end();
+  } else {
+    Serial.println("[Cloud Telemetry] Unable to connect to Netlify endpoint.");
+  }
+}
+
+// ============================================================
 //  WIFI + REST API SERVER
 // ============================================================
 
 void startWiFiAndServer() {
 
-  // Dual mode if STA credentials provided, else AP only
-  if (strlen(STA_SSID) > 0) {
-    WiFi.mode(WIFI_AP_STA);
+  // Dual mode: AP is ALWAYS active + STA connects to your Wi-Fi
+  WiFi.mode(WIFI_AP_STA);
+
+  if (strlen(STA_SSID) > 0 && strcmp(STA_SSID, "Your_WiFi_SSID") != 0) {
     WiFi.begin(STA_SSID, STA_PASSWORD);
     Serial.printf("Connecting to Wi-Fi: %s ...\n", STA_SSID);
   } else {
-    WiFi.mode(WIFI_AP);
+    Serial.println("Note: Enter STA_SSID and STA_PASSWORD in code to enable live cloud upload to Netlify.");
   }
 
   WiFi.setSleep(false);
@@ -332,14 +387,18 @@ void startWiFiAndServer() {
     Serial.printf("mDNS hostname: http://%s.local\n", MDNS_HOSTNAME);
   }
 
+  Serial.printf("Cloud Target : %s\n", CLOUD_TELEMETRY_URL);
+  Serial.println("Web Dashboard: https://aqi-monitoringv1.netlify.app/#dashboard");
+
   // Root endpoint: identifies hardware node and API routes
   server.on("/", HTTP_GET, []() {
     String res = "{\"node\":\"BuildX Air Monitor\",\"firmware\":\"v2.4-c++-hardware-only\"";
-    res += ",\"status\":\"online\",\"endpoints\":[\"/api/data\",\"/api/sensors\",\"/api/status\",\"/api/device/info\"]}";
+    res += ",\"status\":\"online\",\"cloud_target\":\""; res += CLOUD_TELEMETRY_URL; res += "\"";
+    res += ",\"endpoints\":[\"/api/data\",\"/api/sensors\",\"/api/status\",\"/api/device/info\"]}";
     sendJSON(res);
   });
 
-  // Primary telemetry endpoint polled by web clients
+  // Primary telemetry endpoint polled by local clients
   server.on("/api/data", HTTP_GET, []() {
     sendJSON(makeSensorJSON());
   });
@@ -366,6 +425,7 @@ void startWiFiAndServer() {
     status += ",\"alarm_active\":"; status += alarmActive ? "true" : "false";
     status += ",\"buzzer_muted\":"; status += buzzerMuted ? "true" : "false";
     status += ",\"ap_ssid\":\""; status += AP_NAME; status += "\"";
+    status += ",\"sta_connected\":"; status += (WiFi.status() == WL_CONNECTED) ? "true" : "false";
     status += ",\"sta_ip\":\"";  status += WiFi.localIP().toString(); status += "\"";
     status += "}";
     sendJSON(status);
@@ -519,6 +579,7 @@ void setup() {
 
   sensorTimer = millis();
   lcdTimer    = millis();
+  cloudTimer  = millis();
 }
 
 // ============================================================
@@ -536,6 +597,12 @@ void loop() {
   if (now - sensorTimer >= 2000) {
     sensorTimer = now;
     readSensors();
+  }
+
+  // Upload real sensor telemetry to Netlify Cloud every 2000 ms
+  if (now - cloudTimer >= CLOUD_POST_INTERVAL_MS) {
+    cloudTimer = now;
+    sendTelemetryToCloud();
   }
 
   // Update physical 16x2 LCD display every 3000 ms

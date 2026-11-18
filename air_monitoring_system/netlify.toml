@@ -4,6 +4,7 @@
 
 [build]
   publish = "."
+  functions = "netlify/functions"
 
 # Global security & CORS headers
 [[headers]]
@@ -11,7 +12,7 @@
   [headers.values]
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET, POST, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type, Origin, Accept, Authorization"
+    Access-Control-Allow-Headers = "Content-Type, Origin, Accept, Authorization, User-Agent"
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Referrer-Policy = "strict-origin-when-cross-origin"
@@ -26,3 +27,14 @@
   for = "*.js"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# API Route Rewrites to Netlify Telemetry Function
+[[redirects]]
+  from = "/api/data"
+  to = "/.netlify/functions/data"
+  status = 200
+
+[[redirects]]
+  from = "/api/sensors"
+  to = "/.netlify/functions/data"
+  status = 200

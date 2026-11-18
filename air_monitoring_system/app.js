@@ -5,6 +5,7 @@
 */
 
 const DEFAULT_API_URL = "/api/data";
+const CLOUD_FALLBACK_URL = "https://aqi-monitoringv1.netlify.app/api/data";
 const REFRESH_MS = 2000;
 const $ = id => document.getElementById(id);
 
@@ -16,7 +17,10 @@ let isBuzzerMuted = false;
 // ==========================================================================
 function getApiUrl() {
   const custom = localStorage.getItem("telemetry_api_url");
-  return custom && custom.trim() ? custom.trim() : DEFAULT_API_URL;
+  if (custom && custom.trim()) return custom.trim();
+  // When running directly from disk or external domain, poll cloud Netlify endpoint
+  if (window.location.protocol === "file:") return CLOUD_FALLBACK_URL;
+  return DEFAULT_API_URL;
 }
 
 function updateEndpointUI() {
